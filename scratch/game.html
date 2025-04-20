@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cosmo's Donut Dash</title>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #f0f9ff; /* Light sky blue */
+            font-family: 'Press Start 2P', cursive;
+            overflow: hidden; /* Prevent scrollbars */
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        #gameContainer {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 95%;
+            max-width: 800px; /* Max game width */
+            margin: auto;
+        }
+        canvas {
+            border: 2px solid #4a5568; /* Dark gray border */
+            background-color: #ffffff; /* White canvas background */
+            display: block; /* Remove extra space below canvas */
+            width: 100%; /* Make canvas responsive */
+            aspect-ratio: 2 / 1; /* Maintain aspect ratio */
+            max-height: 400px; /* Max game height */
+            border-radius: 0.5rem; /* Rounded corners */
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            cursor: pointer; /* Indicate it's interactive */
+        }
+        #infoBar {
+             display: flex;
+             justify-content: space-between; /* Space out score and lives */
+             width: 100%;
+             max-width: inherit; /* Match canvas max-width */
+             padding: 0 10px; /* Add some padding */
+             margin-top: 0.5rem;
+             font-size: 1rem;
+             color: #2d3748; /* Darker gray */
+        }
+        #scoreBoard, #livesBoard
+             /* Styles already applied by #infoBar font-size/color */
+        
+        #instructions {
+            margin-top: 1rem;
+            font-size: 0.8rem;
+            color: #4a5568;
+            text-align: center;
+        }
+         /* Simple message box styling */
+        #messageBox {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 0, 0.75); /* Slightly darker */
+            color: white;
+            padding: 30px 50px; /* Increased padding */
+            border-radius: 10px;
+            font-size: 1.5rem;
+            text-align: center;
+            display: none; /* Hidden by default */
+            z-index: 100;
+            border: 2px solid white;
+        }
+        #messageBox span {
+             font-size: 1rem;
+             display: block; /* Put restart text on new line */
+             margin-top: 10px;
+        }
+        /* Style for flashing effect on hit */
+        .flash {
+            animation: flash-animation 0.3s 2; /* Run animation twice */
+        }
+        @keyframes flash-animation {
+            0% { opacity: 1; }
+            50% { opacity: 0.3; }
+            100% { opacity: 1; }
+        }
+
+    </style>
+</head>
+<body class="bg-blue-100">
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+        <div id="infoBar">
+             <div id="scoreBoard">Score: 0</div>
+             <div id="livesBoard">Lives: 3</div>
+        </div>
+        <div id="instructions">Press 'ArrowUp' or 'Space' to Jump!</div>
+         <div id="messageBox">
+             Game Over!
+             <span id="finalScoreMsg"></span>
+             <span>Press Enter to Restart</span>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreBoard = document.getElementById('scoreBoard');
+        const livesBoard = document.getElementById('livesBoard');
+        const messageBox = document.getElementById('messageBox');
+        const finalScoreMsg = document.getElementById('finalScoreMsg');
+
+
+        let canvasWidth, canvasHeight; // Will be set on resize/load
+
+        // --- Game Variables ---
+        let score = 0;
+        let lives = 3; // Player lives
+        let gameSpeed = 3.5; // Slightly faster initial speed
+        let gameSpeedIncrease = 0.0015; // Slightly faster increase
+        let isGameOver = false;
+        let animationFrameId; // To control the game loop
+        let isInvincible = false; // Invincibility after getting hit
+        let invincibilityTimer = 0;
+        const invincibilityDuration = 90; // Frames (approx 1.5 seconds at 60fps)
+
+
+        // --- Ground ---
+        let groundHeight;
+
+        // --- Cosmo (Player) ---
+        const cosmoWidth = 45;
+        const cosmoHeight = 40;
+        let cosmoX;
+        let cosmoY;
+        let cosmoVelocityY = 0;
+        const gravity = 0.55; // Slightly higher gravity
+        const jumpStrength = -11.5; // Adjusted jump strength
+        let isJumping = false;
+
+        // --- Donuts ---
+        const donutWidth = 30;
+        const donutHeight = 30;
+        let donuts = [];
+        let donutSpawnTimer = 0;
+        let minDonutSpawnTime = 90; // Adjusted spawn rate
+        let maxDonutSpawnTime = 180;
+        let nextDonutSpawnTime = minDonutSpawnTime;
+
+        // --- Obstacles ---
+        let obstacles = [];
+        const obstacleTypes = [ // Define different obstacle types
+            { type: 'tree', width: 30, height: 60, color: '#8B4513' }, // Brown Tree Trunk
+            { type: 'car', width: 60, height: 35, color: '#DC143C' }   // Crimson Car Body
+            // Can add more types here
+        ];
+        let obstacleSpawnTimer = 0;
+        let minObstacleSpawnTime = 150; // Obstacles spawn less frequently than donuts
+        let maxObstacleSpawnTime = 300;
+        let nextObstacleSpawnTime = minObstacleSpawnTime;
+        const minObstacleGap = 250; // Minimum pixel gap between obstacles
+
+
+        // --- Background Mountains ---
+        let mountains = [];
+        const mountainSpeedFactor = 0.2;
+
+        // --- Asset Drawing Functions ---
+
+        function drawCosmo() {
+            // Apply flashing effect if invincible
+            ctx.globalAlpha = (isInvincible && Math.floor(invincibilityTimer / 6) % 2 === 0) ? 0.5 : 1.0;
+
+            // Simple representation of Cosmo in a jersey
+            const bodyWidth = cosmoWidth * 0.8;
+            const bodyHeight = cosmoHeight * 0.9;
+            const headRadius = cosmoWidth * 0.25;
+            const legHeight = cosmoHeight * 0.3;
+            const legWidth = cosmoWidth * 0.15;
+
+            // Body (Jersey)
+            ctx.fillStyle = '#002255'; // BYU Navy Blue
+            ctx.fillRect(cosmoX + (cosmoWidth - bodyWidth) / 2, cosmoY, bodyWidth, bodyHeight - headRadius / 2);
+
+            // Head
+            ctx.fillStyle = '#D2B48C'; // Tan color for cougar fur
+            ctx.beginPath();
+            ctx.arc(cosmoX + cosmoWidth / 2, cosmoY + headRadius, headRadius, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Simple Ears
+            ctx.fillStyle = '#D2B48C';
+            ctx.beginPath();
+            ctx.moveTo(cosmoX + cosmoWidth / 2 - headRadius * 0.8, cosmoY + headRadius * 0.2);
+            ctx.lineTo(cosmoX + cosmoWidth / 2 - headRadius * 0.3, cosmoY - headRadius * 0.3);
+            ctx.lineTo(cosmoX + cosmoWidth / 2, cosmoY + headRadius * 0.3);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.moveTo(cosmoX + cosmoWidth / 2 + headRadius * 0.8, cosmoY + headRadius * 0.2);
+            ctx.lineTo(cosmoX + cosmoWidth / 2 + headRadius * 0.3, cosmoY - headRadius * 0.3);
+            ctx.lineTo(cosmoX + cosmoWidth / 2, cosmoY + headRadius * 0.3);
+            ctx.fill();
+
+            // Legs (simple representation) - Draw based on jump state for basic animation
+             ctx.fillStyle = '#D2B48C'; // Tan color
+             const legY = cosmoY + bodyHeight - headRadius / 2;
+             if (isJumping) {
+                 // Legs tucked slightly when jumping
+                 ctx.fillRect(cosmoX + (cosmoWidth * 0.3), legY, legWidth, legHeight * 0.7);
+                 ctx.fillRect(cosmoX + (cosmoWidth * 0.7) - legWidth, legY, legWidth, legHeight * 0.7);
+             } else {
+                 // Legs down when on ground
+                 ctx.fillRect(cosmoX + (cosmoWidth - bodyWidth) / 2, legY, legWidth, legHeight);
+                 ctx.fillRect(cosmoX + (cosmoWidth + bodyWidth) / 2 - legWidth, legY, legWidth, legHeight);
+             }
+
+
+            // Optional: Add a number to the jersey
+            ctx.fillStyle = '#FFFFFF'; // White color for number
+            ctx.font = `${bodyHeight * 0.4}px 'Press Start 2P'`; // Use game font
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('1', cosmoX + cosmoWidth / 2, cosmoY + bodyHeight * 0.55);
+
+            // Reset global alpha
+            ctx.globalAlpha = 1.0;
+        }
+
+        function drawDonut(donut) {
+            // Using an emoji for the donut
+            ctx.font = `${donutHeight}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('🍩', donut.x + donutWidth / 2, donut.y + donutHeight / 2);
+        }
+
+        function drawObstacle(obstacle) {
+            ctx.fillStyle = obstacle.color;
+            if (obstacle.type === 'tree') {
+                // Draw trunk
+                ctx.fillRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
+                // Draw simple green top
+                ctx.fillStyle = '#2F855A'; // Dark Green
+                ctx.beginPath();
+                ctx.moveTo(obstacle.x - obstacle.width * 0.5, obstacle.y);
+                ctx.lineTo(obstacle.x + obstacle.width / 2, obstacle.y - obstacle.height * 0.8);
+                ctx.lineTo(obstacle.x + obstacle.width * 1.5, obstacle.y);
+                ctx.closePath();
+                ctx.fill();
+            } else if (obstacle.type === 'car') {
+                // Draw car body
+                ctx.fillRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
+                // Draw simple wheels (circles)
+                ctx.fillStyle = '#2D3748'; // Dark gray
+                const wheelRadius = obstacle.height * 0.25;
+                ctx.beginPath();
+                ctx.arc(obstacle.x + obstacle.width * 0.25, obstacle.y + obstacle.height, wheelRadius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(obstacle.x + obstacle.width * 0.75, obstacle.y + obstacle.height, wheelRadius, 0, Math.PI * 2);
+                ctx.fill();
+            } else {
+                 // Default square obstacle if type is unknown
+                 ctx.fillRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
+            }
+        }
+
+
+        function drawMountains() { /* ... (keep existing mountain code) ... */
+            ctx.fillStyle = '#a0aec0'; // Medium Gray for mountains
+            mountains.forEach(mountain => {
+                ctx.beginPath();
+                ctx.moveTo(mountain.x, groundHeight);
+                ctx.lineTo(mountain.x + mountain.width / 2, groundHeight - mountain.height);
+                ctx.lineTo(mountain.x + mountain.width, groundHeight);
+                ctx.closePath();
+                ctx.fill();
+            });
+
+             // Add simple clouds
+             ctx.fillStyle = 'rgba(255, 255, 255, 0.8)'; // Semi-transparent white
+             if (canvasWidth > 200 && canvasHeight > 100) {
+                 ctx.beginPath();
+                 ctx.arc(canvasWidth * 0.2, canvasHeight * 0.2, canvasHeight * 0.075, 0, Math.PI * 2);
+                 ctx.arc(canvasWidth * 0.25, canvasHeight * 0.22, canvasHeight * 0.0875, 0, Math.PI * 2);
+                 ctx.fill();
+                 ctx.beginPath();
+                 ctx.arc(canvasWidth * 0.7, canvasHeight * 0.15, canvasHeight * 0.1, 0, Math.PI * 2);
+                 ctx.arc(canvasWidth * 0.78, canvasHeight * 0.18, canvasHeight * 0.075, 0, Math.PI * 2);
+                 ctx.fill();
+             }
+        }
+
+        function drawGround() { /* ... (keep existing ground code) ... */
+            ctx.fillStyle = '#68d391'; // Green grass
+            ctx.fillRect(0, groundHeight, canvasWidth, canvasHeight - groundHeight);
+
+            // Add some detail (optional)
+            ctx.fillStyle = '#48bb78'; // Darker green lines
+            for (let i = 0; i < canvasWidth; i += 20) {
+                ctx.fillRect(i, groundHeight, 2, 5);
+            }
+        }
+
+        // --- Game Logic Functions ---
+
+        function updateCosmo() {
+            // Apply gravity
+            cosmoVelocityY += gravity;
+            cosmoY += cosmoVelocityY;
+
+            // Prevent falling through the ground
+            if (cosmoY + cosmoHeight >= groundHeight) {
+                cosmoY = groundHeight - cosmoHeight;
+                cosmoVelocityY = 0;
+                if (isJumping) {
+                   isJumping = false;
+                }
+            }
+
+             // Handle invincibility timer
+             if (isInvincible) {
+                 invincibilityTimer--;
+                 if (invincibilityTimer <= 0) {
+                     isInvincible = false;
+                     canvas.classList.remove('flash'); // Remove flash class if it was added
+                 }
+             }
+        }
+
+        function jump() {
+            const onGround = cosmoY + cosmoHeight >= groundHeight - 5;
+            if (onGround && !isJumping) {
+                cosmoVelocityY = jumpStrength;
+                isJumping = true;
+            }
+        }
+
+        function spawnDonut() {
+            donutSpawnTimer++;
+            if (donutSpawnTimer >= nextDonutSpawnTime) {
+                donutSpawnTimer = 0;
+
+                // Refined Y calculation for reachability
+                const maxReachableY = groundHeight - cosmoHeight - Math.abs(jumpStrength * 10); // Estimate based on jump
+                const minSpawnY = Math.max(canvasHeight * 0.2, maxReachableY); // Don't spawn too high
+                const maxSpawnY = groundHeight - cosmoHeight - 80; // Leave reasonable space above ground
+
+                // Ensure min is less than max
+                const finalMinY = Math.min(minSpawnY, maxSpawnY - donutHeight);
+                const finalMaxY = maxSpawnY;
+
+                // Prevent spawning if range is invalid
+                 if (finalMaxY > finalMinY) {
+                    const randomY = Math.random() * (finalMaxY - finalMinY) + finalMinY;
+                    donuts.push({
+                        x: canvasWidth,
+                        y: randomY
+                    });
+                 } else {
+                     // Fallback: spawn slightly above mid-air if calculation fails
+                     donuts.push({
+                         x: canvasWidth,
+                         y: groundHeight * 0.5
+                     });
+                 }
+
+
+                // Randomize next spawn time
+                const speedFactor = Math.max(0.5, 6 / gameSpeed);
+                minDonutSpawnTime = Math.max(50, 90 * speedFactor);
+                maxDonutSpawnTime = Math.max(100, 180 * speedFactor);
+                nextDonutSpawnTime = Math.floor(Math.random() * (maxDonutSpawnTime - minDonutSpawnTime + 1)) + minDonutSpawnTime;
+            }
+        }
+
+        function updateDonuts() {
+            for (let i = donuts.length - 1; i >= 0; i--) {
+                donuts[i].x -= gameSpeed;
+
+                // Collision detection (same as before)
+                const cosmoLeft = cosmoX; /* ... keep existing collision box vars ... */
+                const cosmoRight = cosmoX + cosmoWidth;
+                const cosmoTop = cosmoY;
+                const cosmoBottom = cosmoY + cosmoHeight;
+                const donutLeft = donuts[i].x;
+                const donutRight = donuts[i].x + donutWidth;
+                const donutTop = donuts[i].y;
+                const donutBottom = donuts[i].y + donutHeight;
+
+                if (
+                    cosmoLeft < donutRight && cosmoRight > donutLeft &&
+                    cosmoTop < donutBottom && cosmoBottom > donutTop
+                ) {
+                    score++;
+                    scoreBoard.textContent = `Score: ${score}`;
+                    donuts.splice(i, 1);
+                } else if (donuts[i].x + donutWidth < 0) {
+                    donuts.splice(i, 1);
+                }
+            }
+        }
+
+         function spawnObstacle() {
+            obstacleSpawnTimer++;
+            if (obstacleSpawnTimer >= nextObstacleSpawnTime) {
+                obstacleSpawnTimer = 0;
+
+                // Check if the last obstacle is far enough away
+                 const lastObstacle = obstacles[obstacles.length - 1];
+                 if (!lastObstacle || (canvasWidth - lastObstacle.x) > minObstacleGap) {
+
+                    // Choose a random obstacle type
+                    const typeIndex = Math.floor(Math.random() * obstacleTypes.length);
+                    const obstacleData = obstacleTypes[typeIndex];
+
+                    obstacles.push({
+                        type: obstacleData.type,
+                        x: canvasWidth,
+                        y: groundHeight - obstacleData.height, // Place on the ground
+                        width: obstacleData.width,
+                        height: obstacleData.height,
+                        color: obstacleData.color
+                    });
+                 }
+
+
+                // Randomize next spawn time
+                const speedFactor = Math.max(0.4, 7 / gameSpeed); // Slower factor adjustment for obstacles
+                minObstacleSpawnTime = Math.max(80, 150 * speedFactor);
+                maxObstacleSpawnTime = Math.max(160, 300 * speedFactor);
+                nextObstacleSpawnTime = Math.floor(Math.random() * (maxObstacleSpawnTime - minObstacleSpawnTime + 1)) + minObstacleSpawnTime;
+            }
+        }
+
+
+        function updateObstacles() {
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                obstacles[i].x -= gameSpeed;
+
+                // Collision detection with Cosmo
+                if (!isInvincible) { // Only check collision if not invincible
+                    const cosmoLeft = cosmoX + 5; // Slightly narrower hitbox
+                    const cosmoRight = cosmoX + cosmoWidth - 5;
+                    const cosmoTop = cosmoY;
+                    const cosmoBottom = cosmoY + cosmoHeight;
+
+                    const obsLeft = obstacles[i].x;
+                    const obsRight = obstacles[i].x + obstacles[i].width;
+                    const obsTop = obstacles[i].y;
+                    const obsBottom = obstacles[i].y + obstacles[i].height;
+
+                    if (
+                        cosmoLeft < obsRight && cosmoRight > obsLeft &&
+                        cosmoTop < obsBottom && cosmoBottom > obsTop
+                    ) {
+                        // Collision!
+                        obstacles.splice(i, 1); // Remove the obstacle
+                        handleCollision();
+                        break; // Exit loop after one collision per frame
+                    }
+                }
+
+                // Remove obstacles that go off-screen
+                if (obstacles[i] && obstacles[i].x + obstacles[i].width < 0) {
+                    obstacles.splice(i, 1);
+                }
+            }
+        }
+
+         function handleCollision() {
+             if (isInvincible) return; // Do nothing if already hit recently
+
+             lives--;
+             updateLivesDisplay();
+             isInvincible = true;
+             invincibilityTimer = invincibilityDuration;
+            // canvas.classList.add('flash'); // Add flash class for visual feedback (optional)
+
+
+             if (lives <= 0) {
+                 isGameOver = true;
+             }
+         }
+
+         function updateLivesDisplay() {
+             livesBoard.textContent = `Lives: ${lives}`;
+             // Could use emojis too: '❤️'.repeat(lives)
+         }
+
+
+        function spawnInitialMountains() { /* ... (keep existing mountain code) ... */
+            mountains = [];
+            let currentX = -50;
+            while (currentX < canvasWidth + 100) {
+                const height = Math.random() * (canvasHeight * 0.3) + (canvasHeight * 0.1);
+                const width = Math.random() * 150 + 100;
+                mountains.push({ x: currentX, width: width, height: height });
+                currentX += width * (Math.random() * 0.3 + 0.6);
+            }
+        }
+
+        function updateMountains() { /* ... (keep existing mountain code) ... */
+             for (let i = mountains.length - 1; i >= 0; i--) {
+                mountains[i].x -= gameSpeed * mountainSpeedFactor;
+                if (mountains[i].x + mountains[i].width < 0) {
+                    const lastMountain = mountains.length > 0 ? mountains[mountains.length - 1] : { x: canvasWidth - 100, width: 150 };
+                    const height = Math.random() * (canvasHeight * 0.3) + (canvasHeight * 0.1);
+                    const width = Math.random() * 150 + 100;
+                    const newX = Math.max(canvasWidth, lastMountain.x + lastMountain.width * (Math.random() * 0.3 + 0.6));
+                    mountains.push({ x: newX, width: width, height: height });
+                    mountains.splice(i, 1);
+                }
+            }
+             if (mountains.length > 0) {
+                 const lastMountain = mountains[mountains.length - 1];
+                 if (lastMountain.x + lastMountain.width < canvasWidth + 50) {
+                     const height = Math.random() * (canvasHeight * 0.3) + (canvasHeight * 0.1);
+                     const width = Math.random() * 150 + 100;
+                     const newX = lastMountain.x + lastMountain.width * (Math.random() * 0.3 + 0.6);
+                     mountains.push({ x: newX, width: width, height: height });
+                 }
+             } else {
+                 spawnInitialMountains();
+             }
+        }
+
+
+        // --- Game Loop ---
+
+        function gameLoop() {
+            if (isGameOver) {
+                showGameOver();
+                cancelAnimationFrame(animationFrameId);
+                return;
+            }
+
+            // Clear canvas
+            ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+            // Increase game speed gradually
+            gameSpeed += gameSpeedIncrease;
+
+            // Update & Draw Background Elements
+            updateMountains();
+            drawMountains();
+            drawGround();
+
+            // Update & Draw Player
+            updateCosmo();
+            drawCosmo();
+
+            // Update & Draw Donuts
+            spawnDonut();
+            updateDonuts();
+            donuts.forEach(drawDonut);
+
+            // Update & Draw Obstacles
+            spawnObstacle();
+            updateObstacles();
+            obstacles.forEach(drawObstacle);
+
+
+            // Request next frame
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        // --- Event Listeners ---
+
+        function handleInput(e) {
+            if ((e.code === 'ArrowUp' || e.code === 'Space') && !isGameOver) {
+                e.preventDefault();
+                jump();
+            }
+             if (e.code === 'Enter' && isGameOver) {
+                 restartGame();
+             }
+        }
+
+        // --- Utility Functions ---
+
+        function resizeCanvas() { /* ... (keep existing resize code) ... */
+            const containerWidth = document.getElementById('gameContainer').offsetWidth;
+            canvas.width = containerWidth;
+            canvas.height = containerWidth / 2;
+
+            const maxHeight = 400;
+            if (canvas.height > maxHeight) {
+                 canvas.height = maxHeight;
+                 if (containerWidth > maxHeight * 2) {
+                    canvas.width = maxHeight * 2;
+                 }
+            }
+
+            canvasWidth = canvas.width;
+            canvasHeight = canvas.height;
+            groundHeight = canvasHeight * 0.85;
+            cosmoX = canvasWidth * 0.1;
+
+            if (cosmoY === undefined || isGameOver) {
+                 cosmoY = groundHeight - cosmoHeight;
+            } else {
+                 if (cosmoY + cosmoHeight > groundHeight) {
+                     cosmoY = groundHeight - cosmoHeight;
+                 }
+            }
+
+            spawnInitialMountains();
+
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
+            }
+
+            ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+            drawMountains();
+            drawGround();
+            drawCosmo();
+            donuts.forEach(drawDonut);
+            obstacles.forEach(drawObstacle); // Draw obstacles on resize too
+
+            if (isGameOver) {
+                 showGameOver();
+            } else {
+                 animationFrameId = requestAnimationFrame(gameLoop);
+            }
+        }
+
+        function showGameOver() {
+             finalScoreMsg.textContent = `Final Score: ${score}`; // Update final score message
+             messageBox.style.display = 'block';
+             ctx.fillStyle = 'rgba(0, 0, 0, 0.6)'; // Slightly darker overlay
+             ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+        }
+
+        function hideGameOver() {
+            messageBox.style.display = 'none';
+        }
+
+
+        function restartGame() {
+            // Reset all game variables
+            score = 0;
+            lives = 3; // Reset lives
+            gameSpeed = 3.5; // Reset speed
+            donuts = [];
+            obstacles = []; // Clear obstacles
+            donutSpawnTimer = 0;
+            obstacleSpawnTimer = 0;
+            nextDonutSpawnTime = minDonutSpawnTime;
+            nextObstacleSpawnTime = minObstacleSpawnTime; // Reset obstacle timer too
+            cosmoY = groundHeight - cosmoHeight;
+            cosmoVelocityY = 0;
+            isJumping = false;
+            isGameOver = false;
+            isInvincible = false; // Reset invincibility
+            invincibilityTimer = 0;
+
+
+            scoreBoard.textContent = `Score: ${score}`;
+            updateLivesDisplay(); // Update lives display
+            hideGameOver();
+            spawnInitialMountains();
+
+            if (animationFrameId) {
+                 cancelAnimationFrame(animationFrameId);
+            }
+            animationFrameId = requestAnimationFrame(gameLoop);
+            console.log("Game Restarted");
+        }
+
+
+        // --- Initialization ---
+
+        function init() {
+            window.removeEventListener('keydown', handleInput);
+            window.removeEventListener('resize', resizeCanvas);
+            window.addEventListener('keydown', handleInput);
+            window.addEventListener('resize', resizeCanvas);
+
+            // Add click/touch listener to canvas for jumping on mobile/touch
+            canvas.removeEventListener('touchstart', jump); // Remove if exists
+            canvas.addEventListener('touchstart', (e) => {
+                 e.preventDefault(); // Prevent double jump / scroll
+                 if (!isGameOver) jump();
+            });
+             canvas.removeEventListener('mousedown', jump); // Remove if exists
+             canvas.addEventListener('mousedown', (e) => {
+                 if (!isGameOver) jump(); // Allow mouse click jump too
+             });
+
+
+            resizeCanvas();
+            restartGame();
+        }
+
+        window.onload = init;
+
+    </script>
+</body>
+</html>

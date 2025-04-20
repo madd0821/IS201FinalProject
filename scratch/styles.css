@@ -1,0 +1,37 @@
+
+body{
+    font-family: Georgia, 'Times New Roman', Times, serif;
+    background-color: rgb(218, 235, 238);
+a{
+    color: black;
+}
+h1, h2{
+    text-align: center;
+}
+img{
+    border: 5px solid rgb(254, 254, 254);
+    padding: 0px;
+    height: 250px;
+    /* margin: auto; 
+    display: block; */
+}
+.rizz{
+    font-family: 'Trebuchet MS', 'Lucida Sans Unicode', 'Lucida Grande', 'Lucida Sans', Arial, sans-serif;
+    color:rgb(233, 179, 229);
+    border: 5px dashed rgb(255, 76, 222);
+    font-size: 400%;
+    font-weight: bolder;
+    background-color: rgb(255, 255, 255)
+}
+.rizz:hover{
+    color: rgb(76, 109, 255);
+    border: 5px solid rgb(233, 179, 229);
+}
+li{
+    width: fit-content;
+}
+li:hover{
+    text-decoration: underline;
+    background-color: rgb(127, 222, 239);
+}
+}
